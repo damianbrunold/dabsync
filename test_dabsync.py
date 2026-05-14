@@ -57,6 +57,7 @@ def default_options(**overrides):
         "log-file": None,
         "verbosity": 0,
         "force": False,
+        "src-newer": False,
         "exclude": [],
     }
     opts.update(overrides)
@@ -100,6 +101,29 @@ class TestCopy(TempTreeCase):
         dabsync.copy(self.src, self.dest, default_options())
         with open(os.path.join(self.dest, "a.txt")) as f:
             self.assertEqual(f.read(), "AAAA")
+
+    def test_src_newer_skips_when_dest_is_newer(self):
+        make_tree(self.src, {"a.txt": "OLD"})
+        make_tree(self.dest, {"a.txt": "NEW"})
+        old = time.time() - 10000
+        os.utime(os.path.join(self.src, "a.txt"), (old, old))
+        dabsync.copy(self.src, self.dest, default_options(**{"src-newer": True}))
+        with open(os.path.join(self.dest, "a.txt")) as f:
+            self.assertEqual(f.read(), "NEW")
+
+    def test_src_newer_overwrites_when_src_is_newer(self):
+        make_tree(self.src, {"a.txt": "NEW"})
+        make_tree(self.dest, {"a.txt": "OLD"})
+        old = time.time() - 10000
+        os.utime(os.path.join(self.dest, "a.txt"), (old, old))
+        dabsync.copy(self.src, self.dest, default_options(**{"src-newer": True}))
+        with open(os.path.join(self.dest, "a.txt")) as f:
+            self.assertEqual(f.read(), "NEW")
+
+    def test_src_newer_still_adds_missing(self):
+        make_tree(self.src, {"a.txt": "hi"})
+        dabsync.copy(self.src, self.dest, default_options(**{"src-newer": True}))
+        self.assertTrue(os.path.exists(os.path.join(self.dest, "a.txt")))
 
     def test_never_deletes(self):
         make_tree(self.src, {"a.txt": "hi"})

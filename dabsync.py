@@ -30,7 +30,10 @@ def _list_dir_safe(path, options):
         raise
 
 
-def _needs_copy(srcstat, deststat):
+def _needs_copy(srcstat, deststat, src_newer_only=False):
+    if src_newer_only:
+        # only overwrite when src is strictly newer (1s tolerance)
+        return (srcstat.st_mtime - deststat.st_mtime) >= 1.0
     if srcstat.st_size != deststat.st_size:
         return True
     # 1s tolerance covers ext4↔FAT/SMB mtime resolution differences
@@ -104,7 +107,7 @@ def copy(src, dest, options):
             else:
                 srcstat = os.stat(srcpath)
                 deststat = os.stat(destpath)
-                if _needs_copy(srcstat, deststat) or options["force"]:
+                if _needs_copy(srcstat, deststat, options["src-newer"]) or options["force"]:
                     if options["verbosity"] >= 1:
                         printlog("*", srcpath)
                     if not options["dry-run"]:
@@ -215,12 +218,9 @@ def sync(src, dest, options):
                                 printlog(str(e))
 
 
-KNOWN_FLAGS = {"--dry-run", "--log-file", "--verbosity", "--silent", "--verbose", "--force", "--exclude"}
-
-
 def _usage():
     print("python dabsync.py <copy|sync> <src> <target> [options]")
-    print("options: --dry-run --log-file PATH --verbosity N --silent --verbose --force --exclude PATTERN")
+    print("options: --dry-run --log-file PATH --verbosity N --silent --verbose --force --src-newer --exclude PATTERN")
 
 
 def _parse_argv(argv):
@@ -229,6 +229,7 @@ def _parse_argv(argv):
         "log-file": None,
         "verbosity": 1,
         "force": False,
+        "src-newer": False,
         "exclude": [],
     }
     args = []
@@ -250,6 +251,8 @@ def _parse_argv(argv):
             options["verbosity"] = 2
         elif with_options and arg == "--force":
             options["force"] = True
+        elif with_options and arg == "--src-newer":
+            options["src-newer"] = True
         elif with_options and arg == "--exclude":
             options["exclude"].append(argv[idx + 1])
             idx += 1

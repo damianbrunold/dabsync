@@ -23,6 +23,7 @@ python dabsync.py <copy|sync> <src> <dest> [options]
 | `--silent` | Shortcut for `--verbosity 0`. |
 | `--verbose` | Shortcut for `--verbosity 2`. |
 | `--force` | Re-copy every file even if size and mtime match. |
+| `--src-newer` | (`copy` mode) Only overwrite a destination file when the source is strictly newer. Files missing in the destination are still added. |
 | `--exclude PATTERN` | Skip entries whose basename matches the fnmatch pattern. Repeatable. |
 | `--` | Stop option parsing (anything after is treated as a positional). |
 
@@ -79,6 +80,12 @@ Force a full re-copy regardless of timestamps (e.g. after a filesystem repair):
 python dabsync.py copy --force ~/photos /mnt/backup/photos
 ```
 
+Merge an older snapshot into a working folder without clobbering newer edits:
+
+```
+python dabsync.py copy --src-newer /mnt/snapshot/notes ~/notes
+```
+
 Use `--` when a path begins with `--`:
 
 ```
@@ -90,7 +97,7 @@ python dabsync.py copy -- --weird-dirname /mnt/backup/weird
 - Change detection compares file size, then mtime with a 1-second tolerance (covers ext4 ↔ FAT/SMB drift). No content hashing.
 - Symlinks are preserved (not followed). A symlink in the source is replicated as a symlink in the destination with the same target. Symlink loops therefore do not cause infinite recursion.
 - `--dry-run` is safe even when the destination doesn't exist yet — the recursion tolerates missing destination directories instead of crashing.
-- `copy` overwrites whenever source and destination differ, regardless of which is newer. If you need src-newer-only semantics, run `sync` instead, or check timestamps before copying.
+- By default `copy` overwrites whenever source and destination differ, regardless of which is newer. Pass `--src-newer` to restrict overwrites to cases where the source mtime is strictly newer than the destination's.
 
 ## Tests
 
