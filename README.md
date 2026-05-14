@@ -2,6 +2,10 @@
 
 A small Python utility for recursively copying or synchronizing directory trees. Single file, standard library only, no install step.
 
+## Why
+
+We needed a simple, consistent way to copy and sync data that behaves the same on both Linux and Windows. Platform-native tools differ (`rsync` is awkward on Windows; `robocopy` doesn't exist on Linux; GUI sync tools introduce their own conventions and dependencies), and most full-featured alternatives bring install requirements that are inconvenient on locked-down or minimal machines. dabsync is a single Python file with no dependencies beyond the standard library, so the same script and the same flags work the same way wherever Python runs.
+
 ## Modes
 
 - **`copy`** — additive. Copies files that are missing in the destination, or whose size/mtime differs. Never deletes anything in the destination.
