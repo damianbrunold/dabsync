@@ -246,7 +246,7 @@ class TestSymlinks(TempTreeCase):
         dabsync.copy(self.src, self.dest, default_options())
         link = os.path.join(self.dest, "link")
         self.assertTrue(os.path.islink(link))
-        self.assertEqual(os.readlink(link), target)
+        self.assertEqual(dabsync._strip_wlp(os.readlink(link)), target)
 
     @unittest.skipUnless(HAS_SIGALRM, "SIGALRM not available on this platform")
     def test_symlink_loop_terminates(self):
@@ -267,7 +267,7 @@ class TestSymlinks(TempTreeCase):
         dabsync.copy(self.src, self.dest, default_options())
         link = os.path.join(self.dest, "broken")
         self.assertTrue(os.path.islink(link))
-        self.assertEqual(os.readlink(link), "/nonexistent/path/here")
+        self.assertEqual(dabsync._strip_wlp(os.readlink(link)), "/nonexistent/path/here")
 
 
 class TestExcludes(TempTreeCase):

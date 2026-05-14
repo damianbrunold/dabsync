@@ -34,6 +34,17 @@ def _wlp(path):
     return "\\\\?\\" + abs_path
 
 
+def _strip_wlp(path):
+    """Inverse of _wlp: remove a \\\\?\\ extended-length prefix if present."""
+    if os.name != "nt" or not path:
+        return path
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    if path.startswith("\\\\?\\"):
+        return path[4:]
+    return path
+
+
 def _copystat_safe(srcpath, destpath):
     """Best-effort copy of mode/mtime/owner from src dir to dest dir."""
     try:
@@ -72,9 +83,9 @@ def _needs_copy(srcstat, deststat, src_newer_only=False):
 
 def _copy_symlink(srcpath, destpath, options):
     """Replicate a symlink at destpath, replacing any existing entry."""
-    target = os.readlink(srcpath)
+    target = _strip_wlp(os.readlink(srcpath))
     if os.path.islink(destpath):
-        if os.readlink(destpath) == target:
+        if _strip_wlp(os.readlink(destpath)) == target:
             return
         if not options["dry-run"]:
             os.remove(destpath)
