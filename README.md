@@ -27,7 +27,7 @@ python dabsync.py <copy|sync> <src> <dest> [options]
 | `--silent` | Shortcut for `--verbosity 0`. |
 | `--verbose` | Shortcut for `--verbosity 2`. |
 | `--force` | Re-copy every file even if size and mtime match. |
-| `--src-newer` | (`copy` mode) Only overwrite a destination file when the source is strictly newer. Files missing in the destination are still added. |
+| `--src-newer` | Only overwrite a destination file when the source is strictly newer (1s tolerance). Works in both `copy` and `sync` modes. Adds, deletions (sync), and type-mismatch handling are unaffected. |
 | `--exclude PATTERN` | Skip entries whose basename matches the fnmatch pattern. Repeatable. |
 | `--` | Stop option parsing (anything after is treated as a positional). |
 
@@ -101,7 +101,10 @@ python dabsync.py copy -- --weird-dirname /mnt/backup/weird
 - Change detection compares file size, then mtime with a 1-second tolerance (covers ext4 ↔ FAT/SMB drift). No content hashing.
 - Symlinks are preserved (not followed). A symlink in the source is replicated as a symlink in the destination with the same target. Symlink loops therefore do not cause infinite recursion.
 - `--dry-run` is safe even when the destination doesn't exist yet — the recursion tolerates missing destination directories instead of crashing.
-- By default `copy` overwrites whenever source and destination differ, regardless of which is newer. Pass `--src-newer` to restrict overwrites to cases where the source mtime is strictly newer than the destination's.
+- By default `copy` and `sync` overwrite whenever source and destination differ, regardless of which is newer. Pass `--src-newer` to restrict overwrites to cases where the source mtime is strictly newer than the destination's.
+- **Directory metadata** (mode bits, mtime; ownership when running as root on POSIX) is preserved on newly created destination directories via `shutil.copystat`. Failures are logged and skipped, not fatal.
+- **Windows long paths** (>260 chars) are handled by transparently prefixing absolute paths with `\\?\` (or `\\?\UNC\` for UNC paths). No-op on non-Windows.
+- **Unicode filenames**: a name that is valid on the source filesystem but cannot be encoded on the destination (e.g. a Linux filename with non-UTF-8 bytes copied to NTFS) is logged and skipped per-entry; the rest of the run continues. There is no fully reliable cross-platform fix — surrogate / non-Unicode bytes simply cannot exist on Windows. If this matters to you, normalize names on the source side first (e.g. `convmv`).
 
 ## Tests
 

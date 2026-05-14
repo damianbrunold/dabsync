@@ -1,6 +1,7 @@
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,21 @@ import dabsync
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "dabsync.py")
+HAS_SIGALRM = hasattr(signal, "SIGALRM")
+
+
+def _can_create_symlink():
+    tmp = tempfile.mkdtemp(prefix="dabsync-symcheck-")
+    try:
+        os.symlink("target", os.path.join(tmp, "link"))
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+CAN_SYMLINK = _can_create_symlink()
 
 
 def make_tree(root, spec):
@@ -154,6 +170,34 @@ class TestSync(TempTreeCase):
         dabsync.sync(self.src, self.dest, default_options())
         self.assertEqual(snapshot(self.dest), {"x": ("file", "now a file")})
 
+    def test_src_newer_skips_when_dest_is_newer(self):
+        make_tree(self.src, {"a.txt": "OLD"})
+        make_tree(self.dest, {"a.txt": "NEW"})
+        old = time.time() - 10000
+        os.utime(os.path.join(self.src, "a.txt"), (old, old))
+        dabsync.sync(self.src, self.dest, default_options(**{"src-newer": True}))
+        with open(os.path.join(self.dest, "a.txt")) as f:
+            self.assertEqual(f.read(), "NEW")
+
+    def test_src_newer_still_deletes_extras(self):
+        # --src-newer must not disable mirror semantics
+        make_tree(self.src, {"a.txt": "hi"})
+        make_tree(self.dest, {"a.txt": "hi", "extra.txt": "byebye"})
+        dabsync.sync(self.src, self.dest, default_options(**{"src-newer": True}))
+        self.assertNotIn("extra.txt", os.listdir(self.dest))
+
+
+@unittest.skipIf(sys.platform == "win32", "POSIX directory mode preservation")
+class TestDirMetadata(TempTreeCase):
+    def test_directory_mode_preserved(self):
+        os.mkdir(os.path.join(self.src, "sub"))
+        os.chmod(os.path.join(self.src, "sub"), 0o750)
+        with open(os.path.join(self.src, "sub", "f.txt"), "w") as f:
+            f.write("x")
+        dabsync.copy(self.src, self.dest, default_options())
+        mode = stat.S_IMODE(os.stat(os.path.join(self.dest, "sub")).st_mode)
+        self.assertEqual(mode, 0o750)
+
 
 class TestDryRun(TempTreeCase):
     def test_copy_into_missing_dest_does_not_crash(self):
@@ -192,6 +236,7 @@ class TestMtimeTolerance(TempTreeCase):
         self.assertEqual(dest_mtime_before, dest_mtime_after)
 
 
+@unittest.skipUnless(CAN_SYMLINK, "platform cannot create symlinks (Windows without dev mode?)")
 class TestSymlinks(TempTreeCase):
     def test_symlink_preserved(self):
         target = os.path.join(self.tmp, "target.txt")
@@ -203,6 +248,7 @@ class TestSymlinks(TempTreeCase):
         self.assertTrue(os.path.islink(link))
         self.assertEqual(os.readlink(link), target)
 
+    @unittest.skipUnless(HAS_SIGALRM, "SIGALRM not available on this platform")
     def test_symlink_loop_terminates(self):
         os.symlink("..", os.path.join(self.src, "loop"))
 

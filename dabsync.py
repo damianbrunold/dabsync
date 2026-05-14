@@ -20,6 +20,34 @@ def _excluded(name, options):
     return any(fnmatch.fnmatch(name, pat) for pat in options.get("exclude", []))
 
 
+def _wlp(path):
+    """On Windows, prefix absolute paths with \\\\?\\ so they bypass MAX_PATH."""
+    if os.name != "nt":
+        return path
+    if not path:
+        return path
+    if path.startswith("\\\\?\\"):
+        return path
+    abs_path = os.path.abspath(path)
+    if abs_path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + abs_path[2:]
+    return "\\\\?\\" + abs_path
+
+
+def _copystat_safe(srcpath, destpath):
+    """Best-effort copy of mode/mtime/owner from src dir to dest dir."""
+    try:
+        shutil.copystat(srcpath, destpath)
+    except OSError as e:
+        printlog(f"copystat {destpath} failed: {e}")
+    if hasattr(os, "chown") and os.geteuid() == 0:
+        try:
+            st = os.stat(srcpath)
+            os.chown(destpath, st.st_uid, st.st_gid)
+        except OSError as e:
+            printlog(f"chown {destpath} failed: {e}")
+
+
 def _list_dir_safe(path, options):
     """os.listdir, but tolerates missing path under --dry-run."""
     try:
@@ -69,6 +97,8 @@ deletes files in the destination, but may overwrite
 files, if the source file is changed (mtime/size).
 """
 def copy(src, dest, options):
+    src = _wlp(src)
+    dest = _wlp(dest)
     if options["verbosity"] >= 2 and os.path.isdir(src):
         printlog(src)
     for path in sorted(_list_dir_safe(src, options)):
@@ -78,43 +108,47 @@ def copy(src, dest, options):
             continue
         srcpath = os.path.join(src, path)
         destpath = os.path.join(dest, path)
-        if os.path.islink(srcpath):
-            if options["verbosity"] >= 1:
-                printlog("+" if not os.path.lexists(destpath) else "*", srcpath)
-            try:
-                _copy_symlink(srcpath, destpath, options)
-            except OSError as e:
-                printlog(str(e))
-            continue
-        if not os.path.lexists(destpath):
-            if os.path.isdir(srcpath):
+        try:
+            if os.path.islink(srcpath):
                 if options["verbosity"] >= 1:
-                    printlog("+", srcpath)
-                if not options["dry-run"]:
-                    os.mkdir(destpath)
-                copy(srcpath, destpath, options)
-            else:
-                if options["verbosity"] >= 1:
-                    printlog("+", srcpath)
-                if not options["dry-run"]:
-                    try:
-                        shutil.copy2(srcpath, destpath)
-                    except OSError as e:
-                        printlog(str(e))
-        else:
-            if os.path.isdir(srcpath):
-                copy(srcpath, destpath, options)
-            else:
-                srcstat = os.stat(srcpath)
-                deststat = os.stat(destpath)
-                if _needs_copy(srcstat, deststat, options["src-newer"]) or options["force"]:
+                    printlog("+" if not os.path.lexists(destpath) else "*", srcpath)
+                try:
+                    _copy_symlink(srcpath, destpath, options)
+                except OSError as e:
+                    printlog(str(e))
+                continue
+            if not os.path.lexists(destpath):
+                if os.path.isdir(srcpath):
                     if options["verbosity"] >= 1:
-                        printlog("*", srcpath)
+                        printlog("+", srcpath)
+                    if not options["dry-run"]:
+                        os.mkdir(destpath)
+                        _copystat_safe(srcpath, destpath)
+                    copy(srcpath, destpath, options)
+                else:
+                    if options["verbosity"] >= 1:
+                        printlog("+", srcpath)
                     if not options["dry-run"]:
                         try:
                             shutil.copy2(srcpath, destpath)
                         except OSError as e:
                             printlog(str(e))
+            else:
+                if os.path.isdir(srcpath):
+                    copy(srcpath, destpath, options)
+                else:
+                    srcstat = os.stat(srcpath)
+                    deststat = os.stat(destpath)
+                    if _needs_copy(srcstat, deststat, options["src-newer"]) or options["force"]:
+                        if options["verbosity"] >= 1:
+                            printlog("*", srcpath)
+                        if not options["dry-run"]:
+                            try:
+                                shutil.copy2(srcpath, destpath)
+                            except OSError as e:
+                                printlog(str(e))
+        except UnicodeEncodeError as e:
+            printlog(f"skipping {path!r}: name not encodable on destination filesystem ({e})")
 
 
 def _remove_dest(destpath):
@@ -149,6 +183,8 @@ After running this, the src and dest should contain the
 same directories and files.
 """
 def sync(src, dest, options):
+    src = _wlp(src)
+    dest = _wlp(dest)
     spaths = _list_dir_safe(src, options)
     dpaths = _list_dir_safe(dest, options)
     paths = list(sorted(set(spaths) | set(dpaths)))
@@ -159,63 +195,68 @@ def sync(src, dest, options):
             continue
         srcpath = os.path.join(src, path)
         destpath = os.path.join(dest, path)
-        if options["verbosity"] >= 2 and os.path.isdir(srcpath) and not os.path.islink(srcpath):
-            printlog(srcpath)
-        if not os.path.lexists(srcpath):
-            if options["verbosity"] >= 1:
-                printlog("-", srcpath)
-            if not options["dry-run"]:
-                _remove_dest(destpath)
-        elif os.path.islink(srcpath):
-            if options["verbosity"] >= 1:
-                printlog("+" if not os.path.lexists(destpath) else "*", srcpath)
-            try:
-                _copy_symlink(srcpath, destpath, options)
-            except OSError as e:
-                printlog(str(e))
-        elif not os.path.lexists(destpath):
-            if options["verbosity"] >= 1:
-                printlog("+", srcpath)
-            if os.path.isdir(srcpath):
+        try:
+            if options["verbosity"] >= 2 and os.path.isdir(srcpath) and not os.path.islink(srcpath):
+                printlog(srcpath)
+            if not os.path.lexists(srcpath):
+                if options["verbosity"] >= 1:
+                    printlog("-", srcpath)
                 if not options["dry-run"]:
-                    os.mkdir(destpath)
-                sync(srcpath, destpath, options)
-            else:
-                if not options["dry-run"]:
-                    try:
-                        shutil.copy2(srcpath, destpath)
-                    except OSError as e:
-                        printlog(str(e))
-        else:
-            if os.path.isdir(srcpath) and not os.path.islink(srcpath):
-                if os.path.isfile(destpath) or os.path.islink(destpath):
-                    if options["verbosity"] >= 1:
-                        printlog("x", srcpath)
+                    _remove_dest(destpath)
+            elif os.path.islink(srcpath):
+                if options["verbosity"] >= 1:
+                    printlog("+" if not os.path.lexists(destpath) else "*", srcpath)
+                try:
+                    _copy_symlink(srcpath, destpath, options)
+                except OSError as e:
+                    printlog(str(e))
+            elif not os.path.lexists(destpath):
+                if options["verbosity"] >= 1:
+                    printlog("+", srcpath)
+                if os.path.isdir(srcpath):
                     if not options["dry-run"]:
-                        os.remove(destpath)
                         os.mkdir(destpath)
-                sync(srcpath, destpath, options)
-            else:
-                if os.path.isdir(destpath) and not os.path.islink(destpath):
-                    if options["verbosity"] >= 1:
-                        printlog("x", srcpath)
+                        _copystat_safe(srcpath, destpath)
+                    sync(srcpath, destpath, options)
+                else:
                     if not options["dry-run"]:
-                        shutil.rmtree(destpath)
                         try:
                             shutil.copy2(srcpath, destpath)
                         except OSError as e:
                             printlog(str(e))
-                else:
-                    srcstat = os.stat(srcpath)
-                    deststat = os.stat(destpath)
-                    if _needs_copy(srcstat, deststat) or options["force"]:
+            else:
+                if os.path.isdir(srcpath) and not os.path.islink(srcpath):
+                    if os.path.isfile(destpath) or os.path.islink(destpath):
                         if options["verbosity"] >= 1:
-                            printlog(srcpath)
+                            printlog("x", srcpath)
                         if not options["dry-run"]:
+                            os.remove(destpath)
+                            os.mkdir(destpath)
+                            _copystat_safe(srcpath, destpath)
+                    sync(srcpath, destpath, options)
+                else:
+                    if os.path.isdir(destpath) and not os.path.islink(destpath):
+                        if options["verbosity"] >= 1:
+                            printlog("x", srcpath)
+                        if not options["dry-run"]:
+                            shutil.rmtree(destpath)
                             try:
                                 shutil.copy2(srcpath, destpath)
                             except OSError as e:
                                 printlog(str(e))
+                    else:
+                        srcstat = os.stat(srcpath)
+                        deststat = os.stat(destpath)
+                        if _needs_copy(srcstat, deststat, options["src-newer"]) or options["force"]:
+                            if options["verbosity"] >= 1:
+                                printlog(srcpath)
+                            if not options["dry-run"]:
+                                try:
+                                    shutil.copy2(srcpath, destpath)
+                                except OSError as e:
+                                    printlog(str(e))
+        except UnicodeEncodeError as e:
+            printlog(f"skipping {path!r}: name not encodable on destination filesystem ({e})")
 
 
 def _usage():
